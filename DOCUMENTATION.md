@@ -41,6 +41,106 @@
 
 ## 1.3 Installation (pas à pas)
 
+## Installation & Test rapide
+
+Cette section est destinée à permettre à un collègue de **cloner le dépôt** et de **tester rapidement** la fonctionnalité de scan.
+
+### Points importants (reproductibilité)
+
+- **Datasets non versionnés** : les dossiers `data/`, `dataset/` et `PlantVillage/` ne sont **pas** inclus dans Git volontairement (poids + non nécessaire pour exécuter une prédiction).
+- **Scan = inférence uniquement** : l’application de scan utilise **uniquement** le modèle déjà entraîné `ai_api/model_plantvillage.pth` + `ai_api/classes.json`.
+- **API Flask à démarrer manuellement** : Laravel ne démarre pas Flask. Il faut lancer l’API IA dans un terminal séparé.
+
+### Commandes (après clonage)
+
+1. Installer les dépendances Python de l’API IA :
+
+   ```bash
+   pip install -r ai_api/requirements.txt
+   ```
+
+2. Démarrer l’API Flask (dans un terminal dédié) :
+
+   ```bash
+   python ai_api/flask_api.py
+   ```
+
+3. Vérifier que l’API IA répond :
+
+   - Ouvrir : `http://127.0.0.1:5001/health`
+
+4. Installer les dépendances Laravel :
+
+   ```bash
+   composer install
+   ```
+
+5. Configurer l’environnement Laravel :
+
+   ```bash
+   copy .env.example .env
+   php artisan key:generate
+   ```
+
+6. Configurer l’accès MySQL dans `.env` puis lancer les migrations :
+
+   ```bash
+   php artisan migrate
+   ```
+
+7. Démarrer Laravel :
+
+   ```bash
+   php artisan serve
+   ```
+
+### Test fonctionnel (scan)
+
+1. Ouvrir l’interface : `http://127.0.0.1:8000/scan`
+2. Importer une **image de feuille de tomate** (formats: JPEG/PNG/JPG/GIF/BMP, max 16MB)
+3. Lancer l’analyse.
+
+Résultats attendus :
+
+- Si l’API IA est démarrée : un diagnostic JSON est renvoyé (plante/maladie/état/confiance).
+- Si l’API IA n’est pas démarrée : un message explicite est renvoyé (ex: « Service d’analyse indisponible. Veuillez démarrer l’API IA. »).
+
+## Vérification rapide de l’installation
+
+Deux scripts sont fournis à la racine pour vérifier que tout est prêt :
+
+- **Windows** : `check_install.ps1`
+- **Linux/macOS** : `check_install.sh`
+
+### Lancement
+
+- Windows (PowerShell) :
+  ```powershell
+  .\check_install.ps1
+  ```
+
+- Linux/macOS (terminal) :
+  ```bash
+  chmod +x check_install.sh
+  ./check_install.sh
+  ```
+
+### Ce que vérifient les scripts
+
+- Python 3.11+ et pip
+- Installation des dépendances IA (`ai_api/requirements.txt`)
+- Présence du modèle `ai_api/model_plantvillage.pth`
+- Disponibilité de l’API Flask (`http://127.0.0.1:5001/health`)
+- PHP et présence de Laravel (`artisan` à la racine)
+
+### En cas d’erreur
+
+Le script affiche des commandes exactes à lancer, par exemple :
+- `pip install -r ai_api/requirements.txt`
+- `python ai_api/flask_api.py`
+
+**Important** : les datasets ne sont **pas** inclus dans Git. Le scan fonctionne avec le modèle pré-entraîné déjà présent dans `ai_api/`.
+
 ### Prérequis
 
 - **Windows + XAMPP** (Apache + MySQL) ou équivalent
@@ -106,6 +206,14 @@ Selon l’implémentation actuelle côté Flask, un message peut être retourné
 - Modèle entraîné sur **PlantVillage** (images propres, conditions contrôlées)
 - Robustesse terrain (lumière, flou, arrière-plan) : améliorable
 - Pas encore de mode multi-plantes
+
+## Limites actuelles du système
+
+- **Scope végétal** : le modèle est restreint à la **tomate**. Toute image d’une autre plante sera forcément classifiée dans une classe tomate ou rejetée.
+- **Origine des données** : entraîné sur **PlantVillage**, un dataset académique (feuilles isolées, fonds neutres, éclairage contrôlé). Les performances peuvent chuter sur des images terrain (fond complexe, ombre, flou, multiples feuilles).
+- **Pas de reconnaissance automatique de la plante** : le système suppose que l’utilisateur fournit une image de tomate. Il n’y a pas de vérification explicite de l’espèce végétale.
+- **Seuil de confiance et rejet** : en cas de faible confiance (ex: < 50%), le système émet un message d’avertissement mais ne rejette pas automatiquement. Une implémentation robuste devrait rejeter les prédictions incertaines.
+- **Outil d’aide à la décision** : AgroPredi est un **assistant technique**, pas un diagnostic agronomique ou médical. Les résultats doivent être validés par un expert terrain avant toute décision de traitement.
 
 ## 1.6 Roadmap
 

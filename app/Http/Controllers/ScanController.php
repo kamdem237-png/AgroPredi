@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use App\Models\Diagnostic;
 use Illuminate\Support\Facades\Storage;
@@ -93,6 +94,11 @@ class ScanController extends Controller
         } catch (\Illuminate\Validation\ValidationException $e) {
             // Laisser Laravel gérer les erreurs de validation (422)
             throw $e;
+        } catch (ConnectionException $e) {
+            return response()->json([
+                'error' => 'Service indisponible',
+                'message' => "Service d’analyse indisponible. Veuillez démarrer l’API IA."
+            ], 503);
         } catch (\Exception $e) {
             return response()->json([
                 'error' => 'Erreur serveur',
