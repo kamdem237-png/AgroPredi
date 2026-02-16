@@ -70,7 +70,7 @@ fi
 # 6. PHP
 if command -v php &> /dev/null; then
     phpv=$(php --version | head -n1)
-    echo "✔ PHP : $phpv"
+    echo "✔ PHP : $phpv
 else
     echo "✖ PHP non trouvé. Installez PHP (via brew, apt, etc.)."
     ok=false

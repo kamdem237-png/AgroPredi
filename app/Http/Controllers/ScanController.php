@@ -7,6 +7,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use App\Models\Diagnostic;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ScanController extends Controller
 {
@@ -22,7 +23,7 @@ class ScanController extends Controller
      */
     public function scan()
     {
-        return view('scan.upload');
+        return view('react', ['page' => 'scan']);
     }
 
     /**
@@ -79,11 +80,24 @@ class ScanController extends Controller
                     'conseils' => $prediction['conseils'] ?? []
                 ]);
 
-                return response()->json([
-                    'success' => true,
-                    'diagnostic_id' => $diagnostic->id,
-                    'prediction' => $prediction
-                ]);
+                if (auth()->check()) {
+                    $diagnostic->user_id = auth()->id();
+                    $diagnostic->save();
+                } else {
+                    $ids = session()->get('anon_diagnostic_ids', []);
+                    $ids[] = $diagnostic->id;
+                    session()->put('anon_diagnostic_ids', array_values(array_unique($ids)));
+                }
+
+                if ($request->expectsJson()) {
+                    return response()->json([
+                        'success' => true,
+                        'diagnostic_id' => $diagnostic->id,
+                        'prediction' => $prediction
+                    ]);
+                }
+
+                return redirect()->route('scan.result', $diagnostic->id);
             } else {
                 return response()->json([
                     'error' => 'Analyse échouée',
@@ -112,8 +126,35 @@ class ScanController extends Controller
      */
     public function history()
     {
-        $diagnostics = Diagnostic::orderBy('created_at', 'desc')->paginate(12);
-        return view('scan.history', compact('diagnostics'));
+        $userId = auth()->id();
+        $diagnostics = Diagnostic::where('user_id', $userId)
+            ->orderBy('created_at', 'desc')
+            ->paginate(12);
+
+        if (request()->expectsJson()) {
+            return response()->json([
+                'diagnostics' => $diagnostics->items(),
+                'pagination' => [
+                    'current_page' => $diagnostics->currentPage(),
+                    'last_page' => $diagnostics->lastPage(),
+                    'per_page' => $diagnostics->perPage(),
+                    'total' => $diagnostics->total(),
+                ],
+            ]);
+        }
+
+        return view('react', [
+            'page' => 'history',
+            'data' => [
+                'diagnostics' => $diagnostics->items(),
+                'pagination' => [
+                    'current_page' => $diagnostics->currentPage(),
+                    'last_page' => $diagnostics->lastPage(),
+                    'per_page' => $diagnostics->perPage(),
+                    'total' => $diagnostics->total(),
+                ],
+            ],
+        ]);
     }
 
     /**
@@ -122,7 +163,178 @@ class ScanController extends Controller
     public function show($id)
     {
         $diagnostic = Diagnostic::findOrFail($id);
+
+        if (!is_null($diagnostic->user_id)) {
+            if (!auth()->check() || auth()->id() !== (int) $diagnostic->user_id) {
+                abort(403);
+            }
+        } else {
+            $allowedIds = session()->get('anon_diagnostic_ids', []);
+            if (!in_array((int) $diagnostic->id, array_map('intval', (array) $allowedIds), true)) {
+                abort(403);
+            }
+        }
+
         return view('scan.detail', compact('diagnostic'));
+    }
+
+    public function result($id)
+    {
+        $diagnostic = Diagnostic::findOrFail($id);
+
+        if (!is_null($diagnostic->user_id)) {
+            if (!auth()->check() || auth()->id() !== (int) $diagnostic->user_id) {
+                abort(403);
+            }
+        } else {
+            $allowedIds = session()->get('anon_diagnostic_ids', []);
+            if (!in_array((int) $diagnostic->id, array_map('intval', (array) $allowedIds), true)) {
+                abort(403);
+            }
+        }
+
+        $diseases = config('diseases', []);
+        $defaultDoc = $diseases['default'] ?? [
+            'scientific_name' => '',
+            'description' => 'Documentation en cours de mise à jour.',
+            'causes' => [],
+            'symptoms' => [],
+            'impact' => 'Documentation en cours de mise à jour.',
+            'prevention' => [],
+            'treatment' => [],
+            'best_practices' => [],
+            'severity' => 'moderate',
+        ];
+
+        $rawKey = trim((string) $diagnostic->maladie);
+        $map = [
+            'Tomato___Early_blight' => 'Early Blight',
+            'Tomato___Late_blight' => 'Late Blight',
+            'Tomato___Septoria_leaf_spot' => 'Septoria Leaf Spot',
+            'Septoria leaf spot' => 'Septoria Leaf Spot',
+            'Tomato___Bacterial_spot' => 'Bacterial Spot',
+            'Tomato___Bacterial_speck' => 'Bacterial Speck',
+            'Tomato___Leaf_Mold' => 'Leaf Mold',
+            'Tomato___Tomato_mosaic_virus' => 'Tomato Mosaic Virus',
+            'Tomato___Tomato_Yellow_Leaf_Curl_Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato___Target_Spot' => 'Target Spot',
+            'Tomato___Spider_mites Two-spotted_spider_mite' => 'Spider Mites Damage',
+            'Tomato___healthy' => 'Healthy',
+            'YellowLeaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Yellow Leaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato YellowLeaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato Yellow Leaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+        ];
+
+        $key = $map[$rawKey] ?? $rawKey;
+        $keyLower = mb_strtolower($key);
+        if (str_contains($keyLower, 'curl') && str_contains($keyLower, 'virus') && str_contains($keyLower, 'yellow')) {
+            $key = 'Tomato Yellow Leaf Curl Virus';
+        }
+
+        if (!isset($diseases[$key])) {
+            $diseasesKeyMap = [];
+            foreach (array_keys($diseases) as $dKey) {
+                $diseasesKeyMap[mb_strtolower((string) $dKey)] = $dKey;
+            }
+
+            $maybeKey = $diseasesKeyMap[mb_strtolower((string) $key)] ?? null;
+            if ($maybeKey) {
+                $key = $maybeKey;
+            }
+        }
+
+        $doc = $diseases[$key] ?? $defaultDoc;
+
+        $imageUrl = null;
+        if ($diagnostic->image_path) {
+            $imageUrl = Storage::url($diagnostic->image_path);
+        }
+        $diagnostic->setAttribute('image_url', $imageUrl);
+
+        if (request()->expectsJson()) {
+            return response()->json([
+                'diagnostic' => $diagnostic,
+                'doc' => $doc,
+            ]);
+        }
+
+        return view('react', [
+            'page' => 'result',
+            'data' => [
+                'diagnostic' => $diagnostic,
+                'doc' => $doc,
+            ],
+        ]);
+    }
+
+    public function resultPdf($id)
+    {
+        $diagnostic = Diagnostic::findOrFail($id);
+
+        if (!is_null($diagnostic->user_id)) {
+            if (!auth()->check() || auth()->id() !== (int) $diagnostic->user_id) {
+                abort(403);
+            }
+        } else {
+            $allowedIds = session()->get('anon_diagnostic_ids', []);
+            if (!in_array((int) $diagnostic->id, array_map('intval', (array) $allowedIds), true)) {
+                abort(403);
+            }
+        }
+
+        $diseases = config('diseases', []);
+        $defaultDoc = $diseases['default'] ?? [
+            'scientific_name' => '',
+            'description' => 'Documentation en cours de mise à jour.',
+            'causes' => [],
+            'symptoms' => [],
+            'impact' => 'Documentation en cours de mise à jour.',
+            'prevention' => [],
+            'treatment' => [],
+            'best_practices' => [],
+            'severity' => 'moderate',
+        ];
+
+        $rawKey = trim((string) $diagnostic->maladie);
+        $map = [
+            'Tomato___Early_blight' => 'Early Blight',
+            'Tomato___Late_blight' => 'Late Blight',
+            'Tomato___Septoria_leaf_spot' => 'Septoria Leaf Spot',
+            'Tomato___Bacterial_spot' => 'Bacterial Spot',
+            'Tomato___Bacterial_speck' => 'Bacterial Speck',
+            'Tomato___Leaf_Mold' => 'Leaf Mold',
+            'Tomato___Tomato_mosaic_virus' => 'Tomato Mosaic Virus',
+            'Tomato___Tomato_Yellow_Leaf_Curl_Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato___Target_Spot' => 'Target Spot',
+            'Tomato___Spider_mites Two-spotted_spider_mite' => 'Spider Mites Damage',
+            'Tomato___healthy' => 'Healthy',
+            'YellowLeaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Yellow Leaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato YellowLeaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+            'Tomato Yellow Leaf Curl Virus' => 'Tomato Yellow Leaf Curl Virus',
+        ];
+
+        $key = $map[$rawKey] ?? $rawKey;
+        $keyLower = mb_strtolower($key);
+        if (str_contains($keyLower, 'curl') && str_contains($keyLower, 'virus') && str_contains($keyLower, 'yellow')) {
+            $key = 'Tomato Yellow Leaf Curl Virus';
+        }
+        $doc = $diseases[$key] ?? $defaultDoc;
+
+        if (!class_exists('Barryvdh\\DomPDF\\Facade\\Pdf')) {
+            abort(501, 'PDF non disponible (DomPDF non installé).');
+        }
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('scan.result_pdf', [
+            'diagnostic' => $diagnostic,
+            'doc' => $doc,
+        ]);
+
+        $safeName = Str::slug(($diagnostic->plante ?: 'plante') . '-' . ($diagnostic->maladie ?: 'diagnostic'));
+        $filename = $safeName . '-' . $diagnostic->id . '.pdf';
+
+        return $pdf->download($filename);
     }
 
     /**

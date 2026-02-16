@@ -43,8 +43,8 @@
 
                         <p class="text-xs text-gray-500 mb-4">{{ $diag->created_at->diffForHumans() }}</p>
 
-                        <a href="{{ route('scan.show', $diag->id) }}" class="text-blue-600 hover:text-blue-700 font-semibold text-sm">
-                            Voir détails →
+                        <a href="{{ route('scan.result', $diag->id) }}" class="text-blue-600 hover:text-blue-700 font-semibold text-sm">
+                            Voir résultat →
                         </a>
                     </div>
                 </div>
